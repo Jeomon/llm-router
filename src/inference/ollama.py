@@ -1,11 +1,13 @@
-from src.inference import BaseInference
+from tenacity import retry,stop_after_attempt,retry_if_exception_type
+from requests import post,RequestException,HTTPError
 from src.message import AIMessage,BaseMessage
-from requests import post
+from src.inference import BaseInference
+from typing import Generator
 from json import loads
-from typing import Literal
 
 class ChatOllama(BaseInference):
-    def invoke(self,messages: list[BaseMessage],stream=False,json=False)->AIMessage:
+    @retry(stop=stop_after_attempt(3),retry=retry_if_exception_type(RequestException))
+    def invoke(self,messages: list[BaseMessage],json=False)->AIMessage:
         headers=self.headers
         temperature=self.temperature
         url=self.base_url or "http://localhost:11434/api/chat"
@@ -16,17 +18,21 @@ class ChatOllama(BaseInference):
                 "temperature": temperature,
             },
             "format":'json' if json else '',
-            "stream":stream
+            "stream":False
         }
         try:
             response=post(url=url,json=payload,headers=headers)
+            response.raise_for_status()
             json_obj=response.json()
-            print(json_obj)
-            return AIMessage(json_obj['message']['content'])
-        except Exception as err:
-            print(err)
+            if json:
+                content=loads(json_obj['message']['content'])
+            else:
+                content=json_obj['message']['content']
+            return AIMessage(content)
+        except HTTPError as err:
+            print(f'Error: {err.response.text}, Status Code: {err.response.status_code}')
     
-    def stream(self,messages: list[BaseMessage],json=False):
+    def stream(self,messages: list[BaseMessage],json=False)->Generator[str,None,None]:
         headers=self.headers
         temperature=self.temperature
         url=self.base_url or "http://localhost:11434/api/chat"
@@ -44,8 +50,8 @@ class ChatOllama(BaseInference):
             response.raise_for_status()
             chunks=response.iter_lines(decode_unicode=True)
             return (loads(chunk)['message']['content'] for chunk in chunks)
-        except Exception as err:
-            print(err)
+        except HTTPError as err:
+            print(f'Error: {err.response.text}, Status Code: {err.response.status_code}')
 
 class Ollama(BaseInference):
     def invoke(self, query:str,json=False)->AIMessage:
@@ -66,10 +72,10 @@ class Ollama(BaseInference):
             response.raise_for_status()
             json_obj=response.json()
             return AIMessage(json_obj['response'])
-        except Exception as err:
-            print(err)
+        except HTTPError as err:
+            print(f'Error: {err.response.text}, Status Code: {err.response.status_code}')
 
-    def stream(self,query:str,json=False):
+    def stream(self,query:str,json=False)->Generator[str,None,None]:
         headers=self.headers
         temperature=self.temperature
         url=self.base_url or "http://localhost:11434/api/generate"
@@ -87,5 +93,5 @@ class Ollama(BaseInference):
             response.raise_for_status()
             chunks=response.iter_lines(decode_unicode=True)
             return (loads(chunk)['response'] for chunk in chunks)
-        except Exception as err:
-            print(err)
+        except HTTPError as err:
+            print(f'Error: {err.response.text}, Status Code: {err.response.status_code}')
